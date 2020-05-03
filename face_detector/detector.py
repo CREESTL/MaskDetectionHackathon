@@ -24,7 +24,7 @@ trigger = 0.9
 
 cap = cv.VideoCapture("godzilla.mp4")
 grab, frame = cap.read()
-while  True:
+while True:
     start = time()
     grab, frame = cap.read()
     blob = cv.dnn.blobFromImage(frame, size=netsize, ddepth=cv.CV_8U)
