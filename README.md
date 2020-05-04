@@ -1,11 +1,11 @@
 # Counting residents and checking for masks
 # What was this project about?
 * Make web application with login form 
-* Use only openvino models to improve perfomance
+* Use only OpenVINO models to improve perfomance
 * A)Find unique people to:
-1. Give them personal id 
+1. Give them personal ID 
 2. Count them
-3. Calculate time they've spend indors
+3. Calculate time they've spent indoors
 * B)Or check the presence of a medical mask
 # Guide 
 ##### 1)python manage.py runserver   
