@@ -15,5 +15,5 @@
 * pass 1  
 ##### 4)DONE!  
   
-![Alt text](https://github.com/kremlev404/MaskDetectionHackathon/tree/kremlev/1.gif "Result")
+![Alt text](https://github.com/kremlev404/MaskDetectionHackathon/blob/kremlev/1.gif "Result")
 ## Perfomed by OpenVino 
