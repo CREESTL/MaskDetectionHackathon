@@ -1,31 +1,97 @@
-import cv2 as cv
-from math import floor
 from django.shortcuts import render
-from django.http import StreamingHttpResponse, HttpResponseServerError,HttpResponseRedirect
+from django.http import HttpResponse,StreamingHttpResponse, HttpResponseServerError,HttpResponseRedirect
 from django.views.decorators import gzip
+
 from django.shortcuts import redirect
+
+from imutils.video import VideoStream
+from imutils.video import FPS
+import mimetypes
+
 import cv2
 from time import time
-from math import sqrt
+import imutils
+from math import sqrt, floor
 import numpy as np
 
+myauth = False
+classesFile = "classes.names"
+ID = 1
+
+# Считываем названия классов
+with open(classesFile, 'rt') as f:
+    classes = f.read().rstrip('\n').split('\n')
+    
+# Считываются все данные для yolo
+yolo_net = cv2.dnn.readNetFromDarknet("yolov3.cfg", 
+                            'yolo-obj_final.weights')
+renet = cv2.dnn.readNet('person-reidentification-retail-0079/FP32/person-reidentification-retail-0079.xml',
+                            'person-reidentification-retail-0079/FP32/person-reidentification-retail-0079.bin')
+net = cv2.dnn.readNet('person-detection-retail-0013/FP32/person-detection-retail-0013.xml',
+                          'person-detection-retail-0013/FP32/person-detection-retail-0013.bin')
+vino_face_net = cv2.dnn.readNet("face-detection-retail-0005/FP32/face-detection-retail-0005.xml", 
+                            "face-detection-retail-0005/FP32/face-detection-retail-0005.bin")
+
+vino_face_net_size = (300, 300)
+netsize = (544, 320)
+renetsize = (64, 160)
+
+# Минимальная вероятность для лица - 90 процентов
+face_threshold = 0.9
+
+inpWidth = 608
+inpHeight = 608
+step = 1
+
+person_threshold = 0.9
+distance_threshold = 0.4
+mask_threshold = 0.5
+nms_threshold = 0.1
+
+yolo_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+yolo_net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+net.setPreferableBackend(cv2.dnn.DNN_BACKEND_INFERENCE_ENGINE)
+net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+renet.setPreferableBackend(cv2.dnn.DNN_BACKEND_INFERENCE_ENGINE)
+renet.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)  
+
+video = cv2.VideoCapture(0)
+
+# Массив с координатами лиц на видео
+cropped_faces = []
+distance = 0    
+chips = []   
+times = {}
+data = {}
+fps = 1
+trigger = 0.8
+dist_trigger = 0.3   
+f_trigger = 0.5
 
 
-#___________________OPENCV___________________
-#____________________________________________
+def compare(data, chip, save=0):
+    reblob = cv2.dnn.blobFromImage(chip, size=renetsize, ddepth=cv2.CV_8U)
+    renet.setInput(reblob)
+    reout = renet.forward()
+    reout = reout.reshape(256)
+    reout /= sqrt(np.dot(reout, reout))
+    ide = 1
+    distance = -1
 
+    if len(data) != 0:
+        for x in data:
+            distance = np.dot(reout, data[x])
+            ide += 1
+            if distance > dist_trigger:
+                ide = x
+                break
 
-# Функция выводит название только необходимы нам слоев
-def getOutputsNames(net):
-    # Выводим названия всех слоёв в сетке
-    layersNames = net.getLayerNames()
+    if distance < dist_trigger:
+        data['id{}'.format(ide)] = reout
+        if save:
+            cv2.imwrite('photos/id{}.jpg'.format(ide), chip)
 
-    # Выводим названия только слоев с несоединенными выводами (?)
-    # Get the names of the output layers, i.e. the layers with unconnected outputs
-    return [layersNames[i[0] - 1] for i in net.getUnconnectedOutLayers()]
-
-
-#------------------------------------------------------------------------------------------------------------
+    return distance, ide
 
 # Функция рисует боксы для масок на кадре
 def yolo_postprocess(frame, outs):
@@ -67,7 +133,7 @@ def yolo_postprocess(frame, outs):
     # сейчас имеем заполненные массивы боксов и ID для одного кадра
     # применим non-maxima suppression чтобы отфильтровать накладывающиеся ненужные боксы
     # для КАЖДОГО кадра indices обновляются
-    indices = cv.dnn.NMSBoxes(boxes, confidences, mask_threshold, nms_threshold)
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, mask_threshold, nms_threshold)
 
     for i in indices:
         # То есть мы "отфильтровали" накладывающиеся боксы и сейчас СНОВА получаем координаты уже
@@ -90,13 +156,20 @@ def yolo_postprocess(frame, outs):
 
 
         # Рисуем бокс и название класса
-        labelSize, baseLine = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         y = max(y, labelSize[1])
-        cv.rectangle(frame, (x, y), (x + width, y + height), (0, 255, 0), 2)
-        cv.putText(frame, label, (x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        cv2.rectangle(frame, (x, y), (x + width, y + height), (0, 255, 0), 2)
+        cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
         return mask_box_coords
+# Функция выводит название только необходимы нам слоев
+def getOutputsNames(net):
+    # Выводим названия всех слоёв в сетке
+    layersNames = net.getLayerNames()
 
+    # Выводим названия только слоев с несоединенными выводами (?)
+    # Get the names of the output layers, i.e. the layers with unconnected outputs
+    return [layersNames[i[0] - 1] for i in net.getUnconnectedOutLayers()]
 
 #------------------------------------------------------------------------------------------------------------
 
@@ -142,13 +215,13 @@ def vino_face_postprocess(frame, outs, mask_box_coords):
                 color = (0, 0, 255)
 
             # Статус маски пишется в правом нижнем углу
-            cv.putText(frame, status, (int(frame_width / 2 ) - 40, frame_height-20), cv.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 2)
+            cv2.putText(frame, status, (int(frame_width / 2 ) - 40, frame_height-20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 2)
 
             # Рисуем бокс лица и название
-            labelSize, baseLine = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             y = max(y, labelSize[1])
-            cv.rectangle(frame, (x, y), (x + width, y + height), color, 2)
-            cv.putText(frame, label, (x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.rectangle(frame, (x, y), (x + width, y + height), color, 2)
+            cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
 
             return face_box_coords
@@ -156,7 +229,7 @@ def vino_face_postprocess(frame, outs, mask_box_coords):
 
 # Функция сравнивает два найденных бокса человека
 def vino_person_compare(data, box):
-    vino_person_re_blob = cv.dnn.blobFromImage(box, size=vino_person_re_net_size, ddepth=cv.CV_8U)
+    vino_person_re_blob = cv2.dnn.blobFromImage(box, size=vino_person_re_net_size, ddepth=cv.CV_8U)
     vino_person_re_net.setInput(vino_person_re_blob)
     vino_person_re_outs = vino_person_re_net.forward()
     vino_person_re_outs = vino_person_re_outs.reshape(256)
@@ -195,7 +268,7 @@ def vino_person_postprocess(frame, outs):
             box = frame[ymin:ymax, xmin:xmax]
 
             # Рисуется первый бокс человека
-            cv.rectangle(frame, (xmin, ymin), (xmax, ymax), (255, 215, 0), 2)
+            cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (255, 215, 0), 2)
 
             # Пробуем сравнить два бокса человека, чтобы отследить его передвижение
             try:
@@ -204,7 +277,7 @@ def vino_person_postprocess(frame, outs):
                 continue
 
             # На кадре рисуется ID человека
-            cv.putText(frame, 'person {}'.format(ID), (xmin, ymax - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            cv2.putText(frame, 'person {}'.format(ID), (xmin, ymax - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     # Возвращаем координаты бокса человека
     person_box_coords = [xmin, ymin, xmax, ymax]
@@ -240,178 +313,91 @@ def check_if_mask_inside_face(face_box_coords, mask_box_coords):
 
 
 # ------------------------------------------------------------------------------------------------------------
-
-
-
-        ######### ОСНОВНОЕ ТЕЛО ПРОГРАММЫ #########
-
-# Объявляем некоторые полезные переменные
-# Минимальная вероятность для маски - 10 процентов
-mask_threshold = 0.5
-nms_threshold = 0.1
-
-# Минимальная вероятность для лица - 90 процентов
-face_threshold = 0.9
-
-# Минимальная вероятность для человека - 90 процентов
-person_threshold = 0.9
-
-# Минимальное расстояние между боксами при отслеживании человека
-distance_threshold = 0.4
-
-# Количество кадров, через которое будет производится распознавание маски
-step = 1
-
-##################################################3
-
-# Размеры входного изображения
-inpWidth = 608
-inpHeight = 608
-
-# Файл с названиями классов
-classesFile = "classes.names"
-
-# Считываем названия классов
-with open(classesFile, 'rt') as f:
-    classes = f.read().rstrip('\n').split('\n')
-
-# Массив с координатами лиц на видео
-cropped_faces = []
-#_________________________________________________________________________________________
-# Файл конфига для yolov3
-yolo_conf = "yolov3.cfg"
-# Файл с весами для yolov3
-yolo_weights = 'yolo-obj_final.weights'
-#_________________________________________________________________________________________
-# Файлы конфига для vino_face
-vino_face_xml = "face-detection-retail-0005/FP32/face-detection-retail-0005.xml"
-vino_face_bin = "face-detection-retail-0005/FP32/face-detection-retail-0005.bin"
-
-# Файлы конфига для vino_person_detection
-vino_person_detection_xml = "person-detection-retail-0013/FP32/person-detection-retail-0013.xml"
-vino_person_detection_bin = "person-detection-retail-0013/FP32/person-detection-retail-0013.bin"
-
-# Файлы конфига для vino_person_reidentification
-vino_person_re_xml = "person-reidentification-retail-0079/FP32/person-reidentification-retail-0079.xml"
-vino_person_re_bin = "person-reidentification-retail-0079/FP32/person-reidentification-retail-0079.bin"
-#_________________________________________________________________________________________
-
-# YOLOv3
-# Считываются все данные для yolo
-yolo_net = cv.dnn.readNetFromDarknet(yolo_conf, yolo_weights)
-
-# Она настраивается
-yolo_net.setPreferableBackend(cv.dnn.DNN_BACKEND_OPENCV)
-yolo_net.setPreferableTarget(cv.dnn.DNN_TARGET_CPU)
-#_________________________________________________________________________________________
-# OpenVINO
-# Считываются все данные для openvino
-# Сетка для распознавания лица
-vino_face_net = cv.dnn.readNet(vino_face_xml, vino_face_bin)
-# Сетка для распознавания человека
-vino_person_detection_net = cv.dnn.readNet(vino_person_detection_xml, vino_person_detection_bin)
-# Сетка для подтверждения человека
-vino_person_re_net = cv.dnn.readNet(vino_person_re_xml, vino_person_re_bin)
-# Настраиваем openvino
-vino_face_net_size = (300, 300)
-vino_person_detection_net_size = (544, 320)
-vino_person_re_net_size = (64, 160)
-
-vino_face_net.setPreferableBackend(cv.dnn.DNN_BACKEND_INFERENCE_ENGINE)
-vino_face_net.setPreferableTarget(cv.dnn.DNN_TARGET_CPU)
-
-vino_person_detection_net.setPreferableBackend(cv.dnn.DNN_BACKEND_INFERENCE_ENGINE)
-vino_person_detection_net.setPreferableTarget(cv.dnn.DNN_TARGET_CPU)
-
-vino_person_re_net.setPreferableBackend(cv.dnn.DNN_BACKEND_INFERENCE_ENGINE)
-vino_person_re_net.setPreferableTarget(cv.dnn.DNN_TARGET_CPU)
-
-
-#_________________________________________________________________________________________
-
-#cap = cv.VideoCapture("test_imgs/doctor.mp4")
-cap = cv.VideoCapture(0)
-grab, frame = cap.read()
-
-# Основная функция программы, производящая всю обработку видео
-def main():
-    count = 0
-    while True:
-        # Запускаем отсчёт времени работы
+class VideoCamera():
+    step = 2
+    def get_frame(self,count):
         start = time()
-        grab, frame = cap.read()
+        grab, frame = video.read()
         if not grab:
-            print("Video Not Found!!!")
-            break
-        count += 1
-        resized = cv.resize(frame, (608,608), interpolation = cv.INTER_AREA)
-        # Создаем каплю(?) из кадра и передаем ее в сеть для анализа
-        # Это производится НЕ каждый кадр для ускорения работы
-        if count % step == 0:
+            raise Exception('Image not found!')
 
-            yolo_blob = cv.dnn.blobFromImage(resized, 1/255, (inpWidth, inpHeight), [0, 0, 0], 1, crop=False)
-            vino_face_blob = cv.dnn.blobFromImage(frame, size=vino_face_net_size, ddepth=cv.CV_8U)
-            vino_person_detection_blob = cv.dnn.blobFromImage(frame, size=vino_person_detection_net_size, ddepth=cv.CV_8U)
-
-            # Помещаем данные в ТРИ сетки: лицо, маска, человек
-            yolo_net.setInput(yolo_blob)
+        #frame = cv2.resize(frame1, (608,608), interpolation = cv2.INTER_AREA)
+        if count % self.step == 0:
+            vino_face_blob = cv2.dnn.blobFromImage(frame, size=vino_face_net_size, ddepth=cv2.CV_8U)   
             vino_face_net.setInput(vino_face_blob)
-            vino_person_detection_net.setInput(vino_person_detection_blob)
 
-            # Получаем выходные данные c yolo
+            blob = cv2.dnn.blobFromImage(frame, size=netsize, ddepth=cv2.CV_8U)
+            net.setInput(blob)
+            out = net.forward()
+
+            yolo_blob = cv2.dnn.blobFromImage(frame, 1/255, (inpWidth, inpHeight), [0, 0, 0], 1, crop=False)
+            yolo_net.setInput(yolo_blob)
             yolo_outs = yolo_net.forward(getOutputsNames(yolo_net))
 
             # Получаем выходные данные c vino_face
             vino_face_outs = vino_face_net.forward()
 
             # Получаем выходные данные c vino_person
-            vino_person_outs = vino_person_detection_net.forward()
+            vino_person_outs = net.forward()
 
             # Данные с yolo обрабатываются в функции
-            mask_box_coords = yolo_postprocess(resized, yolo_outs)
+            mask_box_coords = yolo_postprocess(frame, yolo_outs)
 
             # Данные с vino_face обрабатываются в функции
-            face_box_coords = vino_face_postprocess(resized, vino_face_outs, mask_box_coords)
+            face_box_coords = vino_face_postprocess(frame, vino_face_outs, mask_box_coords)
 
             # Данные с vino_person обрабатываются в функции
-            person_box_coords = vino_person_postprocess(resized, vino_person_outs)
-
-
-
+            person_box_coords = vino_person_postprocess(frame, vino_person_outs)
+        
         # Завершаем отсчёт времени работы для вычисления FPS
         end = time()
         fps = 1 / (end - start)
-        cv.putText(resized, 'fps:{:.2f}'.format(fps + 3), (5, 25),cv.FONT_HERSHEY_SIMPLEX, 1, (255, 144, 30), 2)
 
-        # Кадр со всеми нарисованными боксами показывается
+        cv2.putText(frame, 'fps:{:.2f}'.format(fps + 3), (5, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 144, 30), 2)
 
-
-        # Получаем JPEG копию кадра
-        jpeg = cv2.imencode('.jpg', resized)[1].tostring()
-
-        # Выводим значение за пределы функции
-        yield (b'--jpeg\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + jpeg + b'\r\n\r\n')
+        jpeg = cv2.imencode('.jpg',frame)[1].tostring()
+        '''print(jpeg)
+        j = jpeg.tobytes()
+        print(j)'''
+        return jpeg
 
 
-#___________________DJANGO___________________
-#____________________________________________
-
-myauth = False
-
-def indexscreen(request):
-    global myauth
+def gen(camera):
+    count = 1
+    while True:
+        count +=1
+        frame_1 = VideoCamera().get_frame(count)
+        yield(b'--frame_1\r\n'
+        b'Content-Type: image/jpeg\r\n\r\n' + frame_1 + b'\r\n\r\n')
+        
+'''
+def indexscreen(request): 
     try:
-        if myauth:
-            template = "screens.html"
-            return render(request, template)
-        else:
-            template = "auth.html"
-            return render(request, template)
+        template = "screens.html"
+        return render(request,template)
+
     except HttpResponseServerError:
         print("aborted")
+'''
 
 
+#___________________________________AUTH_UPDATE__________________________________
+
+def indexscreen(request): 
+   global myauth
+   try:
+      if myauth:
+        template = "screens.html"
+        return render(request,template)
+      else:
+        template = "auth.html"
+        return render(request,template)
+   except HttpResponseServerError:
+        print("aborted")
+       
+
+      
 def auth(request):
     global myauth
     print('-------------------------------------------')
@@ -424,12 +410,10 @@ def auth(request):
     print('-------------------------------------------')
     print(name)
     print(pas)
-    if name == 'a' and pas == '1':
+    if name == 'a' and pas =='1':
         myauth = True
         print('auth succesful')
         return HttpResponseRedirect('/stream/screen')
-
-
 def del_auth(request):
     global myauth
     myauth = False
@@ -437,5 +421,7 @@ def del_auth(request):
 
 
 @gzip.gzip_page
-def dynamic_stream(request,num=1,stream_path="2.mp4"):
-    return StreamingHttpResponse(main(), content_type="multipart/x-mixed-replace;boundary=frame")
+def dynamic_stream(request,num=0,stream_path="2.mp4"):
+    stream_path = 'add your camera stream here that can rtsp or http'
+    return StreamingHttpResponse(gen(VideoCamera()),content_type="multipart/x-mixed-replace;boundary=frame")
+
