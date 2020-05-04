@@ -66,7 +66,7 @@ def delete_invalid_files(invalid_files, path):
                     print("Удаляю файл: " + path + r"\\" + file)
                     os.remove(path + r"\\" + file)
         else:
-            print("Пока!")
+            print("Ну ладно")
     else:
         print("Всё в порядке!")
 
@@ -77,15 +77,49 @@ def set_numbers(path):
     if choice == "y":
         start = int(input("С какого числа начать нумерацию?\n"))
         j = start
-        for i, file in enumerate(os.listdir(path)):
+        files = os.listsdir(path)
+        print("files:")
+        for file in files: print(file)
+        for i, file in enumerate(files):
             extention = file[-4:]
-            #print(path + r"\\" + file, "rename to" , path + r"\\" + "{:06}".format(j) + extention)
-            try:
+            new_name = "{:06}".format(j) + extention
+            print("new name = ", new_name)
+            if new_name in os.listdir(path):
+                differense = files.index("{:06}".format(j) + extention) - files.index(file)  # считаем разницу индексов между тем, на котором возникла ошибка и тем, который уже существует
+                print(new_name + " is in " + str(os.listdir(path)))
+                # Если файл с только что созданным именем существует, то мы его переименовываем через разность индексов
+                print( path + r'\\'+ new_name, " rename to ", path + r"\\" + "{:06}".format(j + differense) + extention)
+                os.rename(path + r'\\'+ new_name, path + r"\\" + "{:06}".format(j + differense) + extention)
+                # А затем переименовываем наш исходный файл
+                print(path + r"\\" + file, " rename to ", new_name)
+                os.rename(path + r"\\" + file, new_name)
+            else:
+                # Если все в порядке, то просто переименовываем исходный файл и все
+                os.rename(path + r"\\" + file, new_name)
+
+
+
+
+                '''
+                print()
+                print(file, "1rename to", "{:06}".format(j) + extention)
                 os.rename(path + r"\\" + file, path + r"\\" + "{:06}".format(j) + extention)
                 if i % 2 != 0:
                     j += 1
+            # Если в папке, например 300 фото, начиная с 000001.jpg, а надо пронумеровать их с 200 и больше.
+            # то он попробует перименовать 0000001 в 000221, которая уже есть - это нарушает работу
             except FileExistsError:
+                print("last index = ", files.index("{:06}".format(j) + extention))
+                print("first index = ", files.index(file))
+                differense = files.index("{:06}".format(j) + extention) - files.index(file) # считаем разницу индексов между тем, на котором возникла ошибка и тем, который уже существует
+                print("DIF = ", differense)
+                # прибавляем эту разницу к существующему файлу.
+                print("{:06}".format(j) + extention, " rename to ", "{:06}".format(j + differense) + extention)
+                os.rename(path + r"\\" + "{:06}".format(j) + extention, path + r"\\" + "{:06}".format(j + differense) + extention)
+            except FileNotFoundError:
+                # Если мы существующий файл перенумеровали, то он все еще остался в старом os.listdir(), поэтому его надо игнорировать там
                 continue
+                '''
         print("Файлы были пронумерованы в порядке возрастания!")
     else:
         print("Ну ладно, пока!")
