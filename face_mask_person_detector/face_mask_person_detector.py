@@ -3,7 +3,7 @@ import numpy as np
 from time import time
 from math import sqrt, floor
 
-# Нужна ли она вообще?
+# Функция выводит название только необходимы нам слоев
 def getOutputsNames(net):
     # Выводим названия всех слоёв в сетке
     layersNames = net.getLayerNames()
@@ -16,8 +16,7 @@ def getOutputsNames(net):
 #------------------------------------------------------------------------------------------------------------
 
 # Функция рисует боксы для масок на кадре
-# ЕСЛИ ЦЕНТР МАСКИ В ПРЕДЕЛАХ ЛИЦА - ОНА НАДЕТА
-def yolo_postprocess(frame, outs, face_box_coords):
+def yolo_postprocess(frame, outs):
     # Размеры кадра
     frameHeight = frame.shape[0]
     frameWidth = frame.shape[1]
@@ -77,36 +76,32 @@ def yolo_postprocess(frame, outs, face_box_coords):
             assert (classIDs[i]< len(classes))
             label = '%s:%s' % (classes[classIDs[i]], label)
 
-        # Проверяем, находится ли центр маски внутри бокса лица и меняем цвет бокса маски
-        if (face_box_coords != []) and (mask_box_coords != []):
-            mask_inside = check_if_mask_inside_face(face_box_coords, mask_box_coords, frame)
 
         # Рисуем бокс и название класса
         labelSize, baseLine = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         y = max(y, labelSize[1])
+        cv.rectangle(frame, (x, y), (x + width, y + height), (0, 255, 0), 2)
+        cv.putText(frame, label, (x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        # Если маска надета, то она рисуется зеленым, иначе - красным
-        if mask_inside:
-            color = (0, 255, 0)
-        else:
-            color = (0, 0, 255)
-
-        cv.rectangle(frame, (x, y), (x + width, y + height), color, 2)
-        cv.putText(frame, label, (x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
+        return mask_box_coords
 
 
 #------------------------------------------------------------------------------------------------------------
 
 # Функция рисует боксы для лиц на кадре и заполняет внешний массив координат лиц
-def vino_face_postprocess(frame, outs):
-
+# Также проверяется, надета ли маска
+def vino_face_postprocess(frame, outs, mask_box_coords):
+    frame_height = frame.shape[0]
+    frame_width = frame.shape[1]
     for detection in outs.reshape(-1, 7):
         confidence = float(detection[2])
         x = int(detection[3] * frame.shape[1])
         y = int(detection[4] * frame.shape[0])
         width = int(detection[5] * frame.shape[1]) - x   # Это именно ширина, а не координтата нижнего правого угла
         height = int(detection[6] * frame.shape[0]) - y
+
+        # Получаем координаты лица
+        face_box_coords = [x, y, x + width, y + height]
 
         if confidence > face_threshold:
             cropped_face = frame[y:height, x:width]
@@ -115,13 +110,35 @@ def vino_face_postprocess(frame, outs):
             # Название класса
             label = '%.2f' % confidence
             label = '%s:%s' % ("face", label)
+
+            # Изначально будем считать, что маска не надета
+            mask_inside = False
+            status = "No mask"
+            status_color = (0, 0, 255)
+
+            # Проверяем, находится ли центр маски внутри бокса лица и меняем цвет бокса маски
+            if (face_box_coords != []) and (mask_box_coords != []) and (face_box_coords is not None) and (mask_box_coords is not None):
+                mask_inside = check_if_mask_inside_face(face_box_coords, mask_box_coords)
+
+
+            # Если маска надета, то лицо рисуется зеленым, иначе - красным
+            if mask_inside:
+                color = (0, 255, 0)
+                status = "Mask is on"
+                status_color = (0, 255, 0)
+            else:
+                color = (0, 0, 255)
+
+            # Статус маски пишется в правом нижнем углу
+            cv.putText(frame, status, (int(frame_width / 2 ) - 40, frame_height-20), cv.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 2)
+
             # Рисуем бокс лица и название
             labelSize, baseLine = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             y = max(y, labelSize[1])
-            cv.rectangle(frame, (x, y), (x + width, y + height), (255, 0, 0), 2)
-            cv.putText(frame, label, (x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-            # Возвращаем координаты боксы лица
-            face_box_coords = [x, y, x + width, y + height]
+            cv.rectangle(frame, (x, y), (x + width, y + height), color, 2)
+            cv.putText(frame, label, (x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+
             return face_box_coords
 
 
@@ -175,7 +192,7 @@ def vino_person_postprocess(frame, outs):
                 continue
 
             # На кадре рисуется ID человека
-            cv.putText(frame, '{}'.format(ID), (xmin, ymax - 5), cv.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+            cv.putText(frame, 'person {}'.format(ID), (xmin, ymax - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     # Возвращаем координаты бокса человека
     person_box_coords = [xmin, ymin, xmax, ymax]
@@ -183,7 +200,7 @@ def vino_person_postprocess(frame, outs):
 
 #------------------------------------------------------------------------------------------------------------
 # Функция проверяет, находится ли центр бокса маски в пределах бокса лица
-def check_if_mask_inside_face(face_box_coords, mask_box_coords, frame):
+def check_if_mask_inside_face(face_box_coords, mask_box_coords):
 
     face_x = face_box_coords[0]
     face_y = face_box_coords[1]
@@ -346,11 +363,11 @@ while True:
         # Получаем выходные данные c vino_person
         vino_person_outs = vino_person_detection_net.forward()
 
-        # Данные с vino_face обрабатываются в функции
-        face_box_coords = vino_face_postprocess(resized, vino_face_outs)
-
         # Данные с yolo обрабатываются в функции
-        mask_box_coords = yolo_postprocess(resized, yolo_outs, face_box_coords)
+        mask_box_coords = yolo_postprocess(resized, yolo_outs)
+
+        # Данные с vino_face обрабатываются в функции
+        face_box_coords = vino_face_postprocess(resized, vino_face_outs, mask_box_coords)
 
         # Данные с vino_person обрабатываются в функции
         person_box_coords = vino_person_postprocess(resized, vino_person_outs)
@@ -360,7 +377,7 @@ while True:
     # Завершаем отсчёт времени работы для вычисления FPS
     end = time()
     fps = 1 / (end - start)
-    cv.putText(resized, 'fps:{:.2f}'.format(fps + 3), (5, 25),cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    cv.putText(resized, 'fps:{:.2f}'.format(fps + 3), (5, 25),cv.FONT_HERSHEY_SIMPLEX, 1, (255, 144, 30), 2)
 
     # Кадр со всеми нарисованными боксами показывается
     cv.imshow(winName, resized)
