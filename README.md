@@ -1,7 +1,7 @@
 
-# Counting residents and checking for masks
+# Person & Mask Detector
 # What was this project about?
-* Make web application with implementing computer vision methods
+* Make web application implementing computer vision methods
 * Use OpenVINO and OpenCV models to improve perfomance
 * A)Find unique people to:
     1. Give them personal ID 
