@@ -1,8 +1,8 @@
 
 # Counting residents and checking for masks
 # What was this project about?
-* Make web application with login form 
-* Use only OpenVINO models to improve perfomance
+* Make web application with implementing computer vision methods
+* Use OpenVINO and OpenCV models to improve perfomance
 * A)Find unique people to:
     1. Give them personal ID 
     2. Count them
@@ -20,5 +20,11 @@
 
 ![Alt text](https://github.com/kremlev404/MaskDetectionHackathon/blob/kremlev/1.gif "Result")
 ## Perfomed by OpenVino 
-
+____
+#### What was used:
+- Python 3.7
+- Django
+- OpenCV
+- OpenVINO
+- Bootstrap
 
