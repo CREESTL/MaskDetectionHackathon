@@ -160,3 +160,6 @@ ENV/
 # Убираю базовую БД
 db.sqlite3
 migrations/
+
+# Убираю веса
+.weights

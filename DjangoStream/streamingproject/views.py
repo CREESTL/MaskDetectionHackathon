@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from django.http import  StreamingHttpResponse, HttpResponseServerError, HttpResponseRedirect
+from django.http import StreamingHttpResponse, HttpResponseServerError, HttpResponseRedirect
 from django.views.decorators import gzip
 from django.shortcuts import redirect
 import cv2
@@ -62,6 +62,7 @@ dist_trigger = 0.3
 f_trigger = 0.5
 
 show_mask = False
+
 
 def compare(data, chip, save=0):
     reblob = cv2.dnn.blobFromImage(chip, size=renetsize, ddepth=cv2.CV_8U)
@@ -222,8 +223,11 @@ def vino_face_postprocess(frame, outs, mask_box_coords):
             return face_box_coords
 
 
+fps_k = 1
+
+
 # Функция сравнивает два найденных бокса человека
-def vino_person_compare(data, box):
+def vino_person_compare(data, box, save=0):
     vino_person_re_blob = cv2.dnn.blobFromImage(box, size=vino_person_re_net_size, ddepth=cv.CV_8U)
     vino_person_re_net.setInput(vino_person_re_blob)
     vino_person_re_outs = vino_person_re_net.forward()
@@ -242,13 +246,15 @@ def vino_person_compare(data, box):
 
     if distance < distance_threshold:
         data['id{}'.format(ide)] = vino_person_re_outs
-
+        print(len(data))
+        if save:
+            cv2.imwrite('photos/id{}.jpg'.format(ide), box)
     return distance, ide
 
 
 # Функция рисует боксы для человека, а также отслеживает человека
-def vino_person_postprocess(frame, outs):
-    data = {}
+def vino_person_postprocess(frame, outs, data):
+    global fps_k
     objects = 0
     for detection in outs.reshape(-1, 7):
         confidence = float(detection[2])
@@ -264,17 +270,29 @@ def vino_person_postprocess(frame, outs):
             box = frame[ymin:ymax, xmin:xmax]
 
             # Рисуется первый бокс человека
-            cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (255, 215, 0), 2)
+            cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
 
             # Пробуем сравнить два бокса человека, чтобы отследить его передвижение
             try:
-                distance, ID = vino_person_compare(data, box)
+                distance, ID = compare(data, box, 1)
             except:
                 continue
 
-            # На кадре рисуется ID человека
-            cv2.putText(frame, 'person {}'.format(ID), (xmin, ymax - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255),
-                        1)
+            if ID in times:
+                times[ID] += 1 / fps_k
+            else:
+                times[ID] = 1 / fps_k
+
+                # На кадре рисуется ID человека
+            # cv2.putText(frame, 'person {}'.format(ID), (xmin, ymax - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255),1)
+            cv2.putText(frame, '{:.1f}s'.format(times[ID]), (xmin, ymax + 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    fps_k += 1
+
+    cv2.putText(frame, 'Objects on frame:{}'.format(objects), (5, frame.shape[0] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+    cv2.putText(frame, 'N:{}'.format(len(data)), (5, frame.shape[0] - 45),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
 
     # Возвращаем координаты бокса человека
     person_box_coords = [xmin, ymin, xmax, ymax]
@@ -312,6 +330,7 @@ def check_if_mask_inside_face(face_box_coords, mask_box_coords):
 # ------------------------------------------------------------------------------------------------------------
 class Stream(object):
     step = 2
+    fps_k = 1
 
     def __init__(self, path):
         if path == "0":
@@ -327,7 +346,6 @@ class Stream(object):
         grab, frame = self.video.read()
         if not grab:
             raise Exception('Image not found!')
-
 
         # frame = cv2.resize(frame1, (608,608), interpolation = cv2.INTER_AREA)
         if count % self.step == 0:
@@ -347,9 +365,6 @@ class Stream(object):
                 # Получаем выходные данные c vino_face
                 vino_face_outs = vino_face_net.forward()
 
-            # Получаем выходные данные c vino_person
-            vino_person_outs = net.forward()
-
             if show_mask:
                 # Данные с yolo обрабатываются в функции
                 mask_box_coords = yolo_postprocess(frame, yolo_outs)
@@ -358,7 +373,7 @@ class Stream(object):
                 face_box_coords = vino_face_postprocess(frame, vino_face_outs, mask_box_coords)
 
             # Данные с vino_person обрабатываются в функции
-            person_box_coords = vino_person_postprocess(frame, vino_person_outs)
+            person_box_coords = vino_person_postprocess(frame, out, data)
 
             # Завершаем отсчёт времени работы для вычисления FPS
         end = time()
@@ -369,16 +384,16 @@ class Stream(object):
 
         jpeg = cv2.imencode('.jpg', frame)[1].tostring()
 
-
         return jpeg
+
 
 def generator(N_camera):
     count = 1
     while True:
-        count +=1
+        count += 1
         frame_1 = N_camera.get_frame(count)
-        yield(b'--frame_1\r\n'
-        b'Content-Type: image/jpeg\r\n\r\n' + frame_1 + b'\r\n\r\n')
+        yield (b'--frame_1\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_1 + b'\r\n\r\n')
 
 
 # ___________________________________AUTH_UPDATE__________________________________
@@ -417,7 +432,7 @@ def menu(request):
         if choice == "option2":
             return render(request, "screens.html", {"num": 2, "stream_path": 2})
         if choice == "option3":
-            return render(request, "screens.html", {"num":3, "stream_path": 0})
+            return render(request, "screens.html", {"num": 3, "stream_path": 0})
 
     elif request.method == "GET":
         return render(request, "menu.html")
@@ -430,6 +445,7 @@ def log_out(request):
 
 
 @gzip.gzip_page
-def dynamic_stream(request,num,stream_path):
-    print("---num,path--",num," ",stream_path)
-    return StreamingHttpResponse(generator(Stream(stream_path)),content_type="multipart/x-mixed-replace;boundary=frame")
+def dynamic_stream(request, num, stream_path):
+    print("---num,path--", num, " ", stream_path)
+    return StreamingHttpResponse(generator(Stream(stream_path)),
+                                 content_type="multipart/x-mixed-replace;boundary=frame")
