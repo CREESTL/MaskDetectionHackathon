@@ -10,6 +10,7 @@
 * B)Or check the presence of a medical mask on their faces
  ____
 ### How to activate:
+- download weights for yolov3 [here](https://yadi.sk/d/vR00d0nHVo1qUA)
 - `cd C:\Program Files (x86)\IntelSWTools\openvino\bin`
 - `setupvars.bin`
 - `cd` to `this_project_folder/DjangoStream/`
