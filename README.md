@@ -21,7 +21,6 @@
 - Navigate through the website 
 
 ![Alt text](https://github.com/kremlev404/MaskDetectionHackathon/blob/kremlev/1.gif "Result")
-## Perfomed by OpenVino 
 ____
 #### What was used:
 - Python 3.7
