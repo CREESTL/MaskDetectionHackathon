@@ -10,8 +10,9 @@
 * B)Or check the presence of a medical mask on their faces
  ____
 ### How to activate:
+- You <strong>have</strong> to install OpenVINO in order to use this run this code!
 - download weights for yolov3 [here](https://yadi.sk/d/vR00d0nHVo1qUA)
-- `cd C:\Program Files (x86)\IntelSWTools\openvino\bin`
+- `cd C:\Program Files (x86)\IntelSWTools\openvino\bin` (this directory can be accessed only if OpenVINO is present on your PC)
 - `setupvars.bin`
 - `cd` to `this_project_folder/DjangoStream/`
 - `python manage.py runserver`
